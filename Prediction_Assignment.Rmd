@@ -1,0 +1,266 @@
+---
+title: "Prediction Assignment - Practical Machine Learning"
+author: "Marcelo Tibau"
+date: "11 de novembro de 2016"
+output: html_document
+---
+
+# Executive Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+### Data source
+The data for this project come from the Human Activity Recognition study, conducted by Pontifícia Universidade Católica - Rio de Janeiro.
+Read more: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har). 
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+The training data for this project are available here:
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+## Overview
+This document contains two sections:
+
+Analysis - where I provide the codes to download the cited training and testing datasets as well as clean them and also 3 machine learning algorithms - which regarding one different method of modeling.
+
+Predicting Results - where I digress about what is the expected out of sample error and what model do I think is the best fit to predict the "classe" variable. 
+
+# Analysis
+
+Codes to load the libraries to be used:
+
+```{r}
+library("caret")
+library("gbm")
+library("rpart")
+library("rpart.plot")
+library("RColorBrewer")
+library("rattle")
+library("randomForest")
+```
+
+Codes to download and read the train and test sets:
+
+```{r}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", dest="pml-training.csv", mode="wb")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", dest="pml-testing.csv", mode="wb")
+
+dataTrain <- read.csv("pml-training.csv")
+dataTest <- read.csv("pml-testing.csv")
+head(dataTrain)
+head(dataTest)
+```
+
+As we can see above, there's some NA data in both datasets. I intend to proceed a cleaning of the dataset, but first I will partion the training set into two and check possibles Near Zero Variance Variables (it's a necessity regarding the subject dataset, which has a great amount of Not Available datas, which I will refer as NA, and zero values).  
+
+Codes to partioning the training dataset into two: 70% for training and 30% for testing.
+I set seed to 13563 for reproducibility purposes. 
+
+```{r}
+set.seed(13563)
+inTrain <- createDataPartition(y=dataTrain$classe, p=0.7, list=FALSE)
+training <- dataTrain[inTrain, ]
+testing <- dataTrain[-inTrain, ]
+dim(training)
+dim(testing)
+```
+
+Code to cheack possibles Near Zero Variance Variables:
+
+```{r}
+NZV_check <- nearZeroVar(training, saveMetrics = TRUE)
+NZV_check
+```
+
+Codes to reset both training and testing sets without NZV:
+
+```{r}
+training <- training[, NZV_check$nzv==FALSE]
+dim(training)
+
+NZV_check2 <- nearZeroVar(testing, saveMetrics = TRUE)
+testing <- testing[, NZV_check2$nzv==FALSE]
+dim(testing)
+```
+
+Theres a second transformation worth doing, which is removing the ID variable (the first column) so that it won't interfer with Machine Learning Algorithms:
+
+```{r}
+training <- training[c(-1)]
+testing <- testing[c(-1)]
+```
+
+I decided to clean the variables with more than 60% NAs.The threshold was chosen based at the 60% method, which I considered the most appropriate Training Threshold method for this particular dataset.
+
+I also think worth to explain what's going on: first, I will create a temporary subset to iterate in loop, then I will check for NA in every column in the dataset, select the columns under the 60% method and remove them.For closers, I will set it back to the proper dataset and remove the temp dataset. As you will see the code involved is plain logical reasoning.
+
+Cleaning the training dataset:
+
+```{r}
+temp_train <- training
+for (i in 1:length(training)) {
+  if(sum(is.na(training[, i]))/nrow(training)>=0.6) {
+    for (j in 1:length(temp_train)) {
+      if(length(grep(names(training[i]), names(temp_train)[j]))==1){
+        temp_train <- temp_train[, -j]
+      }
+    }
+  }
+}
+dim(temp_train)  
+  
+training <- temp_train
+rm(temp_train)
+```
+
+Cleaning the testing dataset:
+
+```{r}
+temp_test <- testing
+for (i in 1:length(testing)) {
+  if(sum(is.na(testing[, i]))/nrow(testing)>=0.6) {
+    for (j in 1:length(temp_test)) {
+      if(length(grep(names(testing[i]), names(temp_test)[j]))==1){
+        temp_test <- temp_test[, -j]
+      }
+    }
+  }
+}
+dim(temp_test)  
+
+testing <- temp_test
+rm(temp_test)
+```
+
+I chose to build 3 models. One model, using a random forest ("rf") algorithm, the other, using a decision trees algorithm and a third, using a boosted trees algorithm - also known as generalized boosted regression ("gbm").
+
+Then, I intend to cross validate it predicting the outcomes and checking the accuracy of each model at the testing set.
+
+Codes to build the models:
+
+_Random Forest Algorithm_
+
+```{r}
+set.seed(13563)
+modelFitRF <- randomForest(classe~., data = training)
+```
+
+Cross validating the model:
+
+```{r}
+predictFitRF <- predict(modelFitRF, testing, type = "class")
+```
+
+To check the accuracy:
+
+```{r}
+accuracy_FitRF <- confusionMatrix(predictFitRF, testing$classe)
+accuracy_FitRF
+```
+
+The accuracy of the Random Forest model is 0.9983, a very good one. To facilitate the visualization, I intend to plot it.
+
+```{r}
+plot(modelFitRF, main = "Random Forest Algorithm")
+```
+
+```{r}
+plot(accuracy_FitRF$table, col = accuracy_FitRF$byClass, main = paste("Random Forest Algorithm Accuracy =", round(accuracy_FitRF$overall['Accuracy'], 4)))
+```
+
+_Decision Tree Algorithm_
+
+```{r}
+set.seed(13563)
+modelFitDT <- rpart(classe ~., data = training, method = "class")
+fancyRpartPlot(modelFitDT)
+```
+
+Cross validating the model:
+
+```{r}
+predictFitDT <- predict(modelFitDT, testing, type = "class")
+```
+
+To check the accuracy:
+
+```{r}
+accuracy_FitDT <- confusionMatrix(predictFitDT, testing$classe)  
+accuracy_FitDT
+```
+
+The model accuracy rate is 0.8731. Not a bad one, but less than Random Forest's. Again, in order to facilitate the visualization, a plot is needed.
+
+```{r}
+plot(accuracy_FitDT$table, col = accuracy_FitDT$byClass, main = paste("Decision Tree Algorithm Accuracy =", round(accuracy_FitDT$overall['Accuracy'], 4)))
+```
+
+_Boosted Trees Algorithm_
+
+To load the library needed and set seed to reproducibility.
+
+```{r}
+library(plyr)
+set.seed(13563)
+```
+
+I usually don't use the trainControl function from the caret package because one of its uses is allow to perform a variety of cross validation. As the Confusion Matrix and the predict function allow us to do the same, I usually don't see the point to trainControl the model. However, in this case the model took too long to fit and almost "hijacked" my computer memory, so I used it to cut it short.
+
+```{r}
+FitControlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+
+modelFitGBM <- train(classe~., data = training, method = "gbm", trControl = FitControlGBM, verbose = FALSE)
+
+FinalmodelFitGBM <- modelFitGBM$finalModel
+```
+
+Cross validating the model:
+
+```{r}
+predictFitGBM <- predict(modelFitGBM, newdata = testing)
+```
+
+To check the accuracy:
+
+```{r}
+accuracy_FitGBM <- confusionMatrix(predictFitGBM, testing$classe)
+accuracy_FitGBM
+```
+
+The accuracy of the model is rated at 0.9966. Although, comparing to Random Forest's 0.9983 it's not the best model. Once again, a plot to facilitate the visualization.
+
+```{r}
+plot(modelFitGBM, ylim = c(0.9, 1))
+```
+
+# Predicting Results
+
+Random Forests gave an accuracy of 99.89%, this means that this model is more accurate than the Decision Trees or GBM models.
+
+The expected out-of-sample error is 0.11% (100-99.89).
+
+Code to proceed the prediction:
+
+```{r}
+prediction_results <- predict(modelFitRF, testing, type = "class")
+prediction_results
+```
+
+To generate file texts with predictions to submit for assignment. Here a warning is necessary, the code will create about 5,885 text files, so handle carefully.
+
+```{r}
+file_to_assignment <- function(x){
+  n=length(x)
+  for (i in 1:n) {
+    filename = paste0("problem_id_", i, ".txt")
+    write.table(x[i], file = filename, quote = FALSE, row.names = FALSE, col.names = FALSE)
+  }
+}
+```
+
+To create the files, use the function: file_to_assignment(prediction_results)
