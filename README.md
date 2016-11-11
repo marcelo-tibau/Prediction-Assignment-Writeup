@@ -1,5 +1,5 @@
 # Prediction-Assignment-Writeup
-This repo was created to submit my prediction assignment writeup for the Peer Review. It consists of my R markdown and compiled HTML file describing the analysis.
+This repo was created to submit my prediction assignment writeup for the Peer Review. It consists of my R markdown and compiled HTML file describing the analysis. I also provide a pdf file as a report.
 
 Bellow, I transcribe the goal of the project:
 
